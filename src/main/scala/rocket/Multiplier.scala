@@ -38,6 +38,47 @@ case class MulDivParams(
   divEarlyOutGranularity: Int = 1
 )
 
+class PartialUMulHW() extends Module {
+  val io = IO(new Bundle {
+    val mpcand = Input(UInt(8.W))
+    val mplier = Input(UInt(8.W))
+    val prod   = Output(UInt(16.W))
+    })
+
+  io.prod := io.mpcand * io.mplier
+}
+
+class WallaceSMul(mpcandW: Int, mplierW: Int) extends Module {
+  val io = IO(new Bundle {
+    val mpcand = Input(SInt(mpcandW.W))
+    val mplier = Input(SInt(mplierW.W))
+    val prod   = Output(SInt((mpcandW + mplierW).W))
+    })
+
+  val mpcand_u = Mux(io.mpcand(mpcandW-1), (~io.mpcand).asUInt + 1.U, io.mpcand.asUInt)
+  val mplier_u = Mux(io.mplier(mplierW-1), (~io.mplier).asUInt + 1.U, io.mplier.asUInt)
+
+  val partialProds = Wire(Vec( ((mpcandW+7)/8)*((mplierW+7)/8) , Bits(16.W)))
+  val accum = Wire(Vec( ((mpcandW+7)/8)*((mplierW+7)/8)+1 , Bits((mpcandW+mplierW).W)))
+  accum(0) := Fill((mpcandW+mplierW), 0.U)
+  for (i <- 0 until mpcandW by 8) {
+    for (j <- 0 until mplierW by 8) {
+      val partialUMul = Module(new PartialUMulHW())
+      val mpcand_this = if((mpcandW-i)<8) Cat(Fill(i+8-mpcandW, mpcand_u(mpcandW-1)), mpcand_u(mpcandW-1, i)) else mpcand_u(i+7,i)
+      partialUMul.io.mpcand := mpcand_this
+      val mplier_this = if((mplierW-j)<8) Cat(Fill(j+8-mplierW, mplier_u(mplierW-1)), mplier_u(mplierW-1, j)) else mplier_u(j+7,j)
+      partialUMul.io.mplier := mplier_this
+      partialProds(i*(mplierW+7)/64+j/8) := partialUMul.io.prod
+
+      accum(i*(mplierW+7)/64+j/8+1) := accum(i*(mplierW+7)/64+j/8).asUInt + ((partialProds(i*(mplierW+7)/64+j/8) << (i+j)).asUInt)
+    }
+  }
+
+  val prod_u = Mux(io.mpcand(mpcandW-1)^io.mplier(mplierW-1), ~(accum(((mpcandW+7)/8)*((mplierW+7)/8))).asUInt + 1.U, accum(((mpcandW+7)/8)*((mplierW+7)/8)))
+
+  io.prod := prod_u.asSInt
+}
+
 class MulDiv(cfg: MulDivParams, width: Int, nXpr: Int = 32) extends Module {
   private def minDivLatency = (cfg.divUnroll > 0).option(if (cfg.divEarlyOut) 3 else 1 + w/cfg.divUnroll)
   private def minMulLatency = (cfg.mulUnroll > 0).option(if (cfg.mulEarlyOut) 2 else w/cfg.mulUnroll)
@@ -110,7 +151,14 @@ class MulDiv(cfg: MulDivParams, width: Int, nXpr: Int = 32) extends Module {
     val mplier = mulReg(mulw-1,0)
     val accum = mulReg(2*mulw,mulw).asSInt
     val mpcand = divisor.asSInt
-    val prod = Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt * mpcand + accum
+
+    //val prod = Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt * mpcand + accum
+    val wallace = Module(new WallaceSMul(mpcand.getWidth, 
+                                             Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt.getWidth))
+    wallace.io.mpcand := mpcand
+    wallace.io.mplier := Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt
+    val prod = wallace.io.prod + accum
+
     val nextMulReg = Cat(prod, mplier(mulw-1, cfg.mulUnroll))
     val nextMplierSign = count === mulw/cfg.mulUnroll-2 && neg_out
 
@@ -202,7 +250,14 @@ class PipelinedMultiplier(width: Int, latency: Int, nXpr: Int = 32) extends Modu
 
   val lhs = Cat(lhsSigned && in.bits.in1(width-1), in.bits.in1).asSInt
   val rhs = Cat(rhsSigned && in.bits.in2(width-1), in.bits.in2).asSInt
-  val prod = lhs * rhs
+  
+  //val prod = lhs * rhs
+  val wallace = Module(new WallaceSMul(lhs.getWidth, 
+                                           rhs.getWidth))
+  wallace.io.mpcand := lhs
+  wallace.io.mplier := rhs
+  val prod = wallace.io.prod
+
   val muxed = Mux(cmdHi, prod(2*width-1, width), Mux(cmdHalf, prod(width/2-1, 0).sextTo(width), prod(width-1, 0)))
 
   val resp = Pipe(in, latency-1)
