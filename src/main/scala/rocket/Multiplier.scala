@@ -28,6 +28,7 @@ class MultiplierIO(val dataBits: Int, val tagBits: Int) extends Bundle {
   val req = Flipped(Decoupled(new MultiplierReq(dataBits, tagBits)))
   val kill = Input(Bool())
   val resp = Decoupled(new MultiplierResp(dataBits, tagBits))
+  val rk_approx = Input(new RKApproxes())
 }
 
 case class MulDivParams(
@@ -43,9 +44,35 @@ class PartialUMulHW() extends Module {
     val mpcand = Input(UInt(8.W))
     val mplier = Input(UInt(8.W))
     val prod   = Output(UInt(16.W))
+    val rk_approx = Input(new RKApproxes())
     })
 
-  io.prod := io.mpcand * io.mplier
+  val mul_acc = ~(io.rk_approx.mul8_303 | io.rk_approx.mul8_469 | io.rk_approx.mul8_479 | io.rk_approx.mul8_423 | io.rk_approx.mul8_279)
+  val mpcand_acc = io.mpcand & Fill(8, mul_acc)
+  val mplier_acc = io.mplier & Fill(8, mul_acc)
+  val prod_acc = (mpcand_acc * mplier_acc) & Fill(16, mul_acc)
+  
+  val mpcand_303 = io.mpcand & Fill(8, io.rk_approx.mul8_303)
+  val mplier_303 = io.mplier & Fill(8, io.rk_approx.mul8_303)
+  val prod_303 = mul8_303(mpcand_303, mplier_303) & Fill(16, io.rk_approx.mul8_303)
+
+  val mpcand_469 = io.mpcand & Fill(8, io.rk_approx.mul8_469)
+  val mplier_469 = io.mplier & Fill(8, io.rk_approx.mul8_469)
+  val prod_469 = mul8_469(mpcand_469, mplier_469) & Fill(16, io.rk_approx.mul8_469)
+
+  val mpcand_479 = io.mpcand & Fill(8, io.rk_approx.mul8_479)
+  val mplier_479 = io.mplier & Fill(8, io.rk_approx.mul8_479)
+  val prod_479 = mul8_479(mpcand_479, mplier_479) & Fill(16, io.rk_approx.mul8_479)
+
+  val mpcand_423 = io.mpcand & Fill(8, io.rk_approx.mul8_423)
+  val mplier_423 = io.mplier & Fill(8, io.rk_approx.mul8_423)
+  val prod_423 = mul8_423(mpcand_423, mplier_423) & Fill(16, io.rk_approx.mul8_423)
+
+  val mpcand_279 = io.mpcand & Fill(8, io.rk_approx.mul8_279)
+  val mplier_279 = io.mplier & Fill(8, io.rk_approx.mul8_279)
+  val prod_279 = mul8_279(mpcand_279, mplier_279) & Fill(16, io.rk_approx.mul8_279)
+
+  io.prod := prod_acc | prod_303 | prod_469 | prod_479 | prod_423 | prod_279
 }
 
 class WallaceSMul(mpcandW: Int, mplierW: Int) extends Module {
@@ -53,6 +80,7 @@ class WallaceSMul(mpcandW: Int, mplierW: Int) extends Module {
     val mpcand = Input(SInt(mpcandW.W))
     val mplier = Input(SInt(mplierW.W))
     val prod   = Output(SInt((mpcandW + mplierW).W))
+    val rk_approx = Input(new RKApproxes())
     })
 
   val mpcand_u = Mux(io.mpcand(mpcandW-1), (~io.mpcand).asUInt + 1.U, io.mpcand.asUInt)
@@ -64,6 +92,7 @@ class WallaceSMul(mpcandW: Int, mplierW: Int) extends Module {
   for (i <- 0 until mpcandW by 8) {
     for (j <- 0 until mplierW by 8) {
       val partialUMul = Module(new PartialUMulHW())
+      partialUMul.io.rk_approx := io.rk_approx
       val mpcand_this = if((mpcandW-i)<8) Cat(Fill(i+8-mpcandW, mpcand_u(mpcandW-1)), mpcand_u(mpcandW-1, i)) else mpcand_u(i+7,i)
       partialUMul.io.mpcand := mpcand_this
       val mplier_this = if((mplierW-j)<8) Cat(Fill(j+8-mplierW, mplier_u(mplierW-1)), mplier_u(mplierW-1, j)) else mplier_u(j+7,j)
@@ -153,8 +182,8 @@ class MulDiv(cfg: MulDivParams, width: Int, nXpr: Int = 32) extends Module {
     val mpcand = divisor.asSInt
 
     //val prod = Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt * mpcand + accum
-    val wallace = Module(new WallaceSMul(mpcand.getWidth, 
-                                             Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt.getWidth))
+    val wallace = Module(new WallaceSMul(mpcand.getWidth, Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt.getWidth))
+    wallace.io.rk_approx := io.rk_approx
     wallace.io.mpcand := mpcand
     wallace.io.mplier := Cat(mplierSign, mplier(cfg.mulUnroll-1, 0)).asSInt
     val prod = wallace.io.prod + accum
@@ -235,6 +264,7 @@ class PipelinedMultiplier(width: Int, latency: Int, nXpr: Int = 32) extends Modu
   val io = IO(new Bundle {
     val req = Flipped(Valid(new MultiplierReq(width, log2Ceil(nXpr))))
     val resp = Valid(new MultiplierResp(width, log2Ceil(nXpr)))
+    val rk_approx = Input(new RKApproxes())
   })
 
   val in = Pipe(io.req)
@@ -252,8 +282,8 @@ class PipelinedMultiplier(width: Int, latency: Int, nXpr: Int = 32) extends Modu
   val rhs = Cat(rhsSigned && in.bits.in2(width-1), in.bits.in2).asSInt
   
   //val prod = lhs * rhs
-  val wallace = Module(new WallaceSMul(lhs.getWidth, 
-                                           rhs.getWidth))
+  val wallace = Module(new WallaceSMul(lhs.getWidth, rhs.getWidth))
+  wallace.io.rk_approx := io.rk_approx
   wallace.io.mpcand := lhs
   wallace.io.mplier := rhs
   val prod = wallace.io.prod

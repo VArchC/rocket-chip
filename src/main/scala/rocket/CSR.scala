@@ -245,6 +245,8 @@ class CSRFileIO(implicit p: Parameters) extends CoreBundle
     val set_vstart = Valid(vstart).flip
     val set_vxsat = Bool().asInput
   })
+
+  val rkio = new RKCSRIO(xLen)
 }
 
 class VConfig(implicit p: Parameters) extends CoreBundle {
@@ -630,6 +632,18 @@ class CSRFile(
     reg
   }
 
+  // Risk-5 CSRs
+  read_mapping += CSRs.mrkaddr -> io.rkio.regs.mrkaddr
+  read_mapping += CSRs.mrkgroup -> io.rkio.regs.mrkgroup
+  read_mapping += CSRs.mrkacbhv -> io.rkio.regs.mrkacbhv
+  read_mapping += CSRs.mrkdcbhv -> io.rkio.regs.mrkdcbhv
+  read_mapping += CSRs.mrkav -> io.rkio.regs.mrkav
+  read_mapping += CSRs.srkav -> io.rkio.regs.srkav
+  read_mapping += CSRs.urkav -> io.rkio.regs.urkav
+  read_mapping += CSRs.mrkst -> io.rkio.regs.mrkst
+  read_mapping += CSRs.srkst -> io.rkio.regs.srkst
+  read_mapping += CSRs.urkst -> io.rkio.regs.urkst
+
   // mimpid, marchid, and mvendorid are 0 unless overridden by customCSRs
   Seq(CSRs.mimpid, CSRs.marchid, CSRs.mvendorid).foreach(id => read_mapping.getOrElseUpdate(id, 0.U))
 
@@ -894,6 +908,18 @@ class CSRFile(
 
   val csr_wen = io.rw.cmd.isOneOf(CSR.S, CSR.C, CSR.W)
   io.csrw_counter := Mux(coreParams.haveBasicCounters && csr_wen && (io.rw.addr.inRange(CSRs.mcycle, CSRs.mcycle + CSR.nCtr) || io.rw.addr.inRange(CSRs.mcycleh, CSRs.mcycleh + CSR.nCtr)), UIntToOH(io.rw.addr(log2Ceil(CSR.nCtr+nPerfCounters)-1, 0)), 0.U)
+
+  io.rkio.cmd.wdata := wdata
+  io.rkio.cmd.w_mrkgroup := csr_wen & decoded_addr(CSRs.mrkgroup)
+  io.rkio.cmd.w_mrkacbhv := csr_wen & decoded_addr(CSRs.mrkacbhv)
+  io.rkio.cmd.w_mrkdcbhv := csr_wen & decoded_addr(CSRs.mrkdcbhv)
+  io.rkio.cmd.w_srkav := csr_wen & decoded_addr(CSRs.srkav)
+  io.rkio.cmd.w_urkav := csr_wen & decoded_addr(CSRs.urkav)
+  io.rkio.cmd.w_mrkst := csr_wen & decoded_addr(CSRs.mrkst)
+  io.rkio.cmd.w_srkst := csr_wen & decoded_addr(CSRs.srkst)
+  io.rkio.cmd.w_urkst := csr_wen & decoded_addr(CSRs.urkst)
+  io.rkio.cmd.prv := reg_mstatus.prv
+  
   when (csr_wen) {
     when (decoded_addr(CSRs.mstatus)) {
       val new_mstatus = new MStatus().fromBits(wdata)

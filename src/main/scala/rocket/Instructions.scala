@@ -1164,6 +1164,24 @@ object CSRs {
   val mhpmcounter29h = 0xb9d
   val mhpmcounter30h = 0xb9e
   val mhpmcounter31h = 0xb9f
+
+  // Risk-5 CSRs
+  // ADT base address
+  val mrkaddr  = 0xffd
+  // Current group
+  val mrkgroup = 0x7fb
+  // Activation/Deactivation behaviour
+  val mrkacbhv = 0x7fc
+  val mrkdcbhv = 0x7fd
+  // Availability and delegation
+  val mrkav    = 0xffe
+  val srkav    = 0x9fe
+  val urkav    = 0x8fe
+  // Control and status
+  val mrkst    = 0x7ff
+  val srkst    = 0x9ff
+  val urkst    = 0x8ff
+
   val all = {
     val res = collection.mutable.ArrayBuffer[Int]()
     res += fflags
@@ -1362,6 +1380,19 @@ object CSRs {
     res += marchid
     res += mimpid
     res += mhartid
+    
+    // Risk-5 CSRs
+    res += mrkaddr
+    res += mrkgroup
+    res += mrkacbhv
+    res += mrkdcbhv
+    res += mrkav 
+    res += srkav
+    res += urkav
+    res += mrkst
+    res += srkst
+    res += urkst
+
     res.toArray
   }
   val all32 = {
