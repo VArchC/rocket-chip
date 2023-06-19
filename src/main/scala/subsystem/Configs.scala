@@ -84,13 +84,13 @@ class WithCoherentBusTopology extends Config((site, here, up) => {
       driveMBusClockFromSBus = site(DriveClocksFromSBus)))
 })
 
-class WithNBigCores(n: Int, overrideIdOffset: Option[Int] = None) extends Config((site, here, up) => {
+class WithNBigCores(n: Int, overrideIdOffset: Option[Int] = None, mulUnroll: Int = 8) extends Config((site, here, up) => {
   case RocketTilesKey => {
     val prev = up(RocketTilesKey, site)
     val idOffset = overrideIdOffset.getOrElse(prev.size)
     val big = RocketTileParams(
       core   = RocketCoreParams(mulDiv = Some(MulDivParams(
-        mulUnroll = 8,
+        mulUnroll = mulUnroll,
         mulEarlyOut = true,
         divEarlyOut = true))),
       dcache = Some(DCacheParams(
